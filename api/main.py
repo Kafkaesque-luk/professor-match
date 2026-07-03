@@ -5,7 +5,8 @@ Endpoints
   GET  /api/health           liveness + config visibility (no secrets)
   GET  /api/meta             form options for the web terminal (regions, ranks, types, disciplines)
   POST /api/match            run the match pipeline
-  GET  /api/professor/{id}   full detail for one professor (the terminal's detail page)
+  GET  /api/professor/{id}       full detail for one professor (the terminal's detail page)
+  POST /api/professor/{id}/chat  stateless persona chat (the terminal's AI simulated dialog)
 Static web terminal (if built) is served at /.
 """
 
@@ -79,6 +80,61 @@ def professor_detail(product_id: int) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="professor not found")
     return row
+
+
+@app.post("/api/professor/{product_id}/chat")
+def professor_chat(product_id: int, payload: dict) -> dict:
+    """Stateless professor persona chat (the production five-layer prompt, no sessions/billing).
+
+    Body: {"message": str, "history": [{"role": "user"|"assistant", "content": str}, ...]}.
+    Empty message + empty history -> the persona's opening greeting.
+    """
+    from datetime import date
+
+    from app.persona import (OPENING_TRIGGER, build_professor_system_prompt,
+                             parse_professor_profile, sanitize_history)
+    from app.providers.llm import chat_completion
+    from app.query import _coerce_extend  # same coercion the store uses
+
+    row = get_store().detail(product_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="professor not found")
+    extend = _coerce_extend(row.get("extend")) or {}
+
+    payload = payload or {}
+    message = payload.get("message")
+    message = message.strip() if isinstance(message, str) else ""
+    if len(message) > 500:
+        raise HTTPException(status_code=400, detail="消息长度不能超过500字")
+    history = sanitize_history(payload.get("history"))
+
+    profile = parse_professor_profile(row, extend, date.today().year)
+    messages = [{"role": "system", "content": build_professor_system_prompt(profile)}]
+    messages.extend(history)
+    if not message and not history:
+        messages.append({"role": "user", "content": OPENING_TRIGGER})
+        max_tokens = 600
+    elif not message:
+        raise HTTPException(status_code=400, detail="message 不能为空")
+    else:
+        messages.append({"role": "user", "content": message})
+        max_tokens = 800
+
+    try:
+        reply = chat_completion(messages, max_tokens=max_tokens)
+    except RuntimeError as e:  # unconfigured provider -> clear, actionable error
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"chat failed: {e}")
+    if not reply or not reply.strip():
+        raise HTTPException(status_code=502, detail="AI暂时无法回复，请重试")
+    return {
+        "reply": reply.strip(),
+        "professor_name": row.get("store_name", ""),
+        "professor_image": row.get("image", ""),
+        "institution": profile["institution"],
+        "title": profile["title"],
+    }
 
 
 # ---- admin: runtime deployment config (gated; disabled in demo mode; never leaks secrets) ----

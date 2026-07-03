@@ -21,7 +21,7 @@
   <main>
     <!-- ============ MATCH VIEW ============ -->
     <section id="view-match">
-      <div class="card">
+      <div class="card" id="matchFormCard">
         <h2>教授智能匹配</h2>
         <p class="hint">输入研究兴趣，按语义检索匹配的日本大学教授，分三档呈现：海选匹配 / 年富力强 / 潜力洼地。</p>
 
@@ -59,13 +59,11 @@
       </div>
 
       <div id="matchError"></div>
-      <!-- Results render as a phone screen replicating the production app 1:1
-           (three-tier tabs, school groups, professor cards, tap-through detail page). -->
-      <div id="phoneWrap" class="phone-wrap" hidden>
-        <div class="phone">
-          <div class="phone-screen" id="phoneScreen"></div>
-        </div>
-      </div>
+      <!-- Desktop results: every element of the production app's result page (three-tier
+           tabs, school groups, professor cards) restructured for a wide web layout. -->
+      <section id="resultsArea" hidden></section>
+      <!-- Desktop professor detail (papers-first main column + info sidebar). -->
+      <section id="detailArea" hidden></section>
     </section>
 
     <!-- ============ SETUP VIEW ============ -->
@@ -124,6 +122,8 @@
     </section>
   </main>
 
+  <!-- AI simulated dialog drawer (desktop right panel; stateless persona chat) -->
+  <aside id="chatDrawer" class="chat-drawer" hidden></aside>
   <div id="pmToast" class="pm-toast"></div>
 
   <script src="config.js"></script>

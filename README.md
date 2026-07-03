@@ -88,22 +88,32 @@ is configurable — so the same UI can point at:
 - a **live upstream** deployment (e.g. behind a read-only proxy) for a full-scale preview.
 
 It does double duty: a **Setup** tab (connection, health, runtime provider/key config) and a
-**Match** tab. Match results render as a **phone screen that replicates the production mobile
-app 1:1** — the three-tier tabs, school groups, professor cards (avatar, title badge, estimated-age
-tag, match-score pill, research-keyword chips), and a tap-through **professor detail page**
-(basic info, research keywords/field, output statistics, education & career timelines, awards,
-patents, and parsed publications with peer-review badges and copy-citation). The card/detail
+**Match** tab. Match results render in a **desktop web layout carrying every element of the
+production mobile app** — the three-tier tabs (counts + info tooltips), school groups, professor
+cards (avatar, title badge, estimated-age tag, match-score pill, research-keyword chips, hover
+lift), and a click-through **professor detail page**: a hero header (avatar, name, affiliation,
+age/title ribbon) above a two-column body with **publications first** in the main column
+(parsed citations, peer-review badges, external links, copy-citation; always rendered — an
+honest empty state when the CV has none), education/career timelines, awards and patents, and
+an info sidebar (basic info, research keywords/field, output statistics). The card/detail
 parsing logic (`web/professor.js`) is a faithful port of the production frontend helpers.
 
-The detail page is powered by `GET /api/professor/{id}` (full CV for one professor from the
-bundled sample). When pointing at a different backend, set `detailPath` in `config.js`
-(`'{id}'` placeholder) alongside `matchPath`.
+The **AI simulated dialog** button on the detail page opens a chat drawer that actually works:
+the backend rebuilds the production five-layer persona prompt (identity anchor / CV memory /
+data-driven keyword trend / methodology / style constraints, plus anti-hallucination guards)
+from the professor's public CV and answers in character. The chat is stateless — the browser
+carries the history; nothing is stored server-side.
+
+The detail page is powered by `GET /api/professor/{id}` and the chat by
+`POST /api/professor/{id}/chat` (needs an LLM key; returns a clear error otherwise). When
+pointing at a different backend, set `detailPath` / `chatPath` in `config.js` (`'{id}'`
+placeholder) alongside `matchPath`.
 
 **Publishing your own demo to GitHub Pages:** the included workflow (`.github/workflows/pages.yml`)
 deploys `web/` to Pages. Point it at your backend by setting repository variables `DEMO_API_BASE`
-(+ optional `DEMO_MATCH_PATH` / `DEMO_DETAIL_PATH`) under Settings → Secrets and variables →
-Actions → Variables; leave them unset and the build ships the same-origin default, so forks never
-silently call someone else's backend.
+(+ optional `DEMO_MATCH_PATH` / `DEMO_DETAIL_PATH` / `DEMO_CHAT_PATH`) under Settings → Secrets
+and variables → Actions → Variables; leave them unset and the build ships the same-origin
+default, so forks never silently call someone else's backend.
 
 ## Bring your own data
 
@@ -160,9 +170,13 @@ OpenAI 密钥（在 `.env` 或终端「设置」页填写）。
 **算法忠实性**：年龄估算、学科硬过滤、筛选转换、三档分桶、按校分组等确定性逻辑，是对生产 PHP 的
 逐行移植，并有测试覆盖（`api/tests/`）。检索复用生产同款嵌入模型与向量，结果与生产同源。
 
-**网页终端**后端无关：同一套界面既能连本机自部署的 Python，也能（经只读代理）连线上满血部署做效果预览。
-匹配结果以「手机屏」形式 1:1 复刻生产 App——三档页签、按校分组、教授卡片（头像/职称/预估年龄/匹配度/研究关键词），
-点击卡片进入与 App 同款的**教授详情页**（基本信息、研究关键词/分野、成果统计、教育背景与职业经历时间轴、获奖、专利、
-论文解析含査読徽章与引用复制）。
+**网页终端**后端无关：同一套界面既能连本机自部署的 Python，也能（经只读代理）连线上满血部署做效果预览
+（线上演示背后是生产全量约 18 万教授索引；自部署跑的是自带的 5000 教授样本）。
+匹配结果以**电脑端网页布局**承载生产 App 的全部要素——三档页签、按校分组、教授卡片（头像/职称/预估年龄/匹配度/研究关键词），
+点击卡片进入**教授详情页**：英雄区（头像、姓名、所属、年龄/职称绶带）+ 双栏正文，**研究论文置顶主栏**
+（解析出标题/作者/期刊/日期，査読徽章、外链、引用复制，无论文时诚实提示），教育背景/职业经历时间轴、获奖、专利，
+侧栏为基本信息、研究关键词/分野、成果统计。详情页的「AI模拟对话」是真实可用的：后端按教授公开履历重建生产同款
+五层 persona prompt（身份锚定/档案记忆/关键词趋势/科研手法/风格约束+防幻觉），以教授第一人称作答；
+对话无状态，历史由浏览器携带，服务端不存任何记录。
 
 数据来自公开的 [researchmap](https://researchmap.jp) 学术主页，不含联系方式与业务数据。

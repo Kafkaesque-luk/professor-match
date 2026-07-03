@@ -1,7 +1,8 @@
 /* professor-match terminal — vanilla, no build, backend-agnostic.
- * The results area renders as a phone screen that replicates the production app 1:1:
+ * Desktop web layout carrying every element of the production app's professor pages:
  * three-tier tabs, school groups, professor cards (avatar / title badge / age tag /
- * score pill / keyword chips) and a tap-through professor detail page. */
+ * score pill / keyword chips), a papers-first detail page, and a working stateless
+ * AI persona chat (the production five-layer prompt on the backend). */
 (function () {
   'use strict';
   const $ = (s, el = document) => el.querySelector(s);
@@ -13,14 +14,14 @@
     kinki: '近畿', chugoku: '中国', shikoku: '四国', kyushu: '九州' };
   const TYPE_LABELS = { national: '国公立', private: '私立' };
   const TIERS = [
-    { key: 'popular_choices', name: '海选匹配',
+    { key: 'popular_choices', name: '海选匹配', sub: '最对口',
       info: '与研究方向语义匹配度最高的教授，覆盖面最广。', note: '',
       emptyText: '暂无匹配结果', emptyHint: '调整研究方向或筛选范围后重新匹配' },
-    { key: 'niche_research', name: '年富力强',
+    { key: 'niche_research', name: '年富力强', sub: '33-55岁',
       info: '55 岁以下、距退休较远、更可能在招收新生的教授。', note: '年龄据公开履历推算，仅供参考。',
       emptyText: '这批匹配里暂无可确认年龄的年富力强教授',
       emptyHint: '年富力强仅收录能可信推算年龄、且 55 岁以下的教授；可换研究方向或放宽筛选再试' },
-    { key: 'hidden_gems', name: '潜力洼地',
+    { key: 'hidden_gems', name: '潜力洼地', sub: '非顶尖校',
       info: '研究方向契合、院校排名相对靠后，录取竞争更小。', note: '',
       emptyText: '暂无潜力洼地推荐', emptyHint: '潜力洼地聚焦非顶尖校的强匹配；可换研究方向或放宽筛选再试' },
   ];
@@ -32,19 +33,20 @@
     apiBase: lsBase !== null ? lsBase : (CFG.apiBase || ''),
     adminToken: LS.getItem('pm_admin_token') || '',
     matchPath: CFG.matchPath || '/api/match',
-    detailPath: CFG.detailPath || '/api/professor/{id}',   // '{id}' placeholder
+    detailPath: CFG.detailPath || '/api/professor/{id}',      // '{id}' placeholder
+    chatPath: CFG.chatPath || '/api/professor/{id}/chat',     // '{id}' placeholder（PHP 版无占位符也可）
     metaMode: CFG.metaMode || 'auto',     // 'auto' = try /api/meta then bundled | 'bundled'
     healthMode: CFG.healthMode || 'auto', // 'auto' = try /api/health | 'none' = skip (live demo)
     meta: null, health: null, result: null,
     sel: { regions: new Set(), ranks: new Set(), types: new Set() },
     activeTier: 'popular_choices',
-    view: 'list',            // phone screen: 'list' | 'detail'
+    view: 'list',            // 'list' | 'detail'
     detailCache: new Map(),  // product_id -> detail payload
-    listScrollTop: 0,
+    listScrollY: 0,
     showTabInfo: false,
     papersExpanded: false,
-    typedKeywords: null,     // typewriter effect state
     typingTimer: null,
+    chat: null,              // { pid, name, image, institution, title, msgs, sending, error }
   };
   const bundledMeta = () => window.PM_META || { regions: [], ranks: [], school_types: [], disciplines: [] };
 
@@ -143,18 +145,10 @@
     };
   }
 
-  function screenEl() { return $('#phoneScreen'); }
-
-  function navbarHtml(title, withBack) {
-    return '<div class="app-navbar">'
-      + (withBack ? '<div class="nav-back" id="navBack">' + SVG.back + '</div>' : '')
-      + '<div class="nav-title">' + esc(title) + '</div></div>';
-  }
-
   function skeletonCards(n) {
     let rows = '';
     for (let i = 0; i < n; i++) {
-      rows += '<div class="skeleton-card" style="animation-delay:' + (i * 0.1) + 's">'
+      rows += '<div class="skeleton-card" style="animation-delay:' + (i * 0.08) + 's">'
         + '<div class="skeleton-avatar"></div><div class="skeleton-content">'
         + '<div class="skeleton-line skeleton-line-title"></div>'
         + '<div class="skeleton-line skeleton-line-text"></div>'
@@ -163,14 +157,12 @@
     return '<div class="skeleton-container">' + rows + '</div>';
   }
 
-  function showMatchSkeleton() {
-    $('#phoneWrap').hidden = false;
-    state.view = 'list';
-    screenEl().innerHTML = navbarHtml('教授匹配', false)
-      + '<div class="app-page">'
-      + '<div class="keywords-section"><span class="keywords-label">扩展关键词：</span>'
-      + '<span class="keywords-text" id="kwTyping"></span><span class="typing-cursor">|</span></div>'
-      + skeletonCards(6) + '</div>';
+  function showArea(which) {
+    $('#resultsArea').hidden = which !== 'results';
+    $('#detailArea').hidden = which !== 'detail';
+    // the match form only belongs to the list view — the detail page owns the whole width
+    $('#matchFormCard').hidden = which === 'detail';
+    $('#matchError').hidden = which === 'detail';
   }
 
   function runMatch() {
@@ -179,8 +171,13 @@
     if (!userInput) { $('#matchError').innerHTML = errBox('请先输入研究兴趣'); return; }
     $('#runBtn').disabled = true; $('#runHint').textContent = '匹配中…';
     stopTyping();
-    showMatchSkeleton();
-    $('#phoneWrap').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    state.view = 'list';
+    showArea('results');
+    $('#resultsArea').innerHTML =
+      '<div class="keywords-section"><span class="keywords-label">扩展关键词：</span>'
+      + '<span class="keywords-text"></span><span class="typing-cursor">|</span></div>'
+      + skeletonCards(6);
+    $('#resultsArea').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     api(state.matchPath, { method: 'POST', body: JSON.stringify({ user_input: userInput, filters: buildFilters() }) })
       .then((res) => {
         state.result = res;
@@ -190,7 +187,7 @@
         renderList({ typeKeywords: true });
       })
       .catch((e) => {
-        $('#phoneWrap').hidden = true;
+        $('#resultsArea').hidden = true;
         $('#matchError').innerHTML = errBox(e.message);
       })
       .finally(() => { $('#runBtn').disabled = false; $('#runHint').textContent = ''; });
@@ -201,20 +198,22 @@
     return groups.reduce((n, g) => n + (g.professor_count || (g.professors || []).length), 0);
   }
 
-  // ---- list screen (replica of pages/ai_planning/professor_result.vue) ----
+  // ---- results (desktop layout, all app elements) ----
   function renderList(opts) {
     opts = opts || {};
     const r = state.result;
     if (!r) return;
     state.view = 'list';
+    showArea('results');
     const tierIdx = TIERS.findIndex((t) => t.key === state.activeTier);
-    const tabs = TIERS.map((t, i) =>
+    const tier = TIERS[tierIdx] || TIERS[0];
+    const tabs = TIERS.map((t) =>
       '<button class="app-tab ' + (state.activeTier === t.key ? 'active' : '') + '" data-tier="' + t.key + '">'
       + '<span class="tab-name">' + t.name + '</span>'
       + '<span class="tab-count">(' + tierCount(t.key) + ')</span>'
+      + '<span class="tab-sub">' + t.sub + '</span>'
       + (state.activeTier === t.key ? '<span class="tab-info-btn" data-info="1">?</span>' : '')
       + '</button>').join('');
-    const tier = TIERS[tierIdx] || TIERS[0];
     const infoPop = state.showTabInfo
       ? '<div class="tab-info-pop"><div class="tab-info-caret" style="left:' + ['16.66%', '50%', '83.33%'][tierIdx] + '"></div>'
         + '<span class="tab-info-text">' + esc(tier.info) + '</span>'
@@ -246,16 +245,13 @@
         return html;
       }).join('');
     }
-    screenEl().innerHTML = navbarHtml('教授匹配', false)
-      + '<div class="app-page">'
-      + '<div class="app-tab-bar">' + tabs + infoPop + '</div>'
-      + disc + kwHtml + body + '</div>';
+    $('#resultsArea').innerHTML =
+      '<div class="app-tab-bar">' + tabs + infoPop + '</div>' + disc + kwHtml + body;
     if (kws.length) {
       if (opts.typeKeywords) startTyping(kwFull);
       else $('#kwTyping').textContent = kwFull;
     }
-    if (opts.restoreScroll) screenEl().scrollTop = state.listScrollTop;
-    else screenEl().scrollTop = 0;
+    if (opts.restoreScroll) window.scrollTo(0, state.listScrollY);
   }
 
   function renderSchoolGroup(g, gIndex, baseIdx) {
@@ -266,7 +262,7 @@
       + '<span class="header-school">' + esc(g.school_name || '未知学校') + '</span>'
       + '<span class="header-score">综合匹配度 ' + P.matchPercent(g.avg_score) + '%</span>'
       + '<span class="header-count">' + (g.professor_count || (g.professors || []).length) + '位教授</span>'
-      + '</div>' + profs + '</div>';
+      + '</div><div class="prof-grid">' + profs + '</div></div>';
   }
 
   function renderProfCard(p, globalIdx) {
@@ -284,20 +280,19 @@
         + P.matchPercent(p.similarity_score !== undefined ? p.similarity_score : p.match_score) + '%</span></span>'
       : '';
     // Gold line: institution (= the group's school key) + parsed department, like the app.
-    const inst = p.school_name || '';
     const goldParts = [];
-    if (inst) goldParts.push(esc(inst));
+    if (p.school_name) goldParts.push(esc(p.school_name));
     if (td.department) goldParts.push(esc(td.department));
     const gold = goldParts.length
-      ? '<div class="interview-stats-row"><span class="repurchase-rank-gold">' + goldParts.join(' | ') + '</span></div>' : '';
+      ? '<div class="repurchase-rank-gold">' + goldParts.join(' | ') + '</div>' : '';
     const kws = Array.isArray(p.research_keywords) ? p.research_keywords.slice(0, 3) : [];
     const chipsHtml = kws.length
       ? '<div class="bottom-info-content">' + kws.map((k) => '<span class="info-item">' + esc(k) + '</span>').join('') + '</div>'
       : '';
     return '<div class="interview-card professor-card-slide-in" data-pid="' + Number(p.product_id) + '"'
-      + ' style="animation-delay:' + (globalIdx * 0.05) + 's">'
+      + ' style="animation-delay:' + (Math.min(globalIdx, 20) * 0.04) + 's">'
       + '<div class="interview-card-layout">'
-      + '<div class="interview-avatar-section"><img class="interview-avatar" src="' + esc(avatarUrl(p)) + '"' + AVATAR_ONERR + ' alt=""></div>'
+      + '<div class="interview-avatar-section"><img class="interview-avatar" src="' + esc(avatarUrl(p)) + '"' + AVATAR_ONERR + ' alt="" loading="lazy"></div>'
       + '<div class="interview-info-section">'
       + '<div class="interview-header-row">'
       + '<div class="header-left-group">'
@@ -332,23 +327,24 @@
     }, 30);
   }
 
-  // ---- detail screen (replica of pages/goods_details/professor) ----
-  function detailUrl(pid) {
-    return state.detailPath.replace('{id}', String(pid));
-  }
+  // ---- detail (desktop: hero + papers-first main column + info sidebar) ----
+  function detailUrl(pid) { return state.detailPath.replace('{id}', String(pid)); }
+  function chatUrl(pid) { return state.chatPath.replace('{id}', String(pid)); }
 
-  function openDetail(pid) {
-    state.listScrollTop = screenEl().scrollTop;
+  function openDetail(pid, fromHistory) {
+    if (!fromHistory) {
+      state.listScrollY = window.scrollY;
+      history.pushState({ pmDetail: pid }, '', '#p' + pid);
+    }
     state.view = 'detail';
     state.papersExpanded = false;
-    history.pushState({ pmDetail: pid }, '', '#p' + pid);
+    showArea('detail');
+    window.scrollTo(0, 0);
     if (state.detailCache.has(pid)) {
       renderDetail(state.detailCache.get(pid));
       return;
     }
-    screenEl().innerHTML = navbarHtml('教授详情', true)
-      + '<div class="detail-loading">' + skeletonCards(4) + '</div>';
-    screenEl().scrollTop = 0;
+    $('#detailArea').innerHTML = detailTopbar() + skeletonCards(4);
     api(detailUrl(pid))
       .then((d) => {
         state.detailCache.set(pid, d);
@@ -356,9 +352,12 @@
       })
       .catch((e) => {
         if (state.view !== 'detail') return;
-        screenEl().innerHTML = navbarHtml('教授详情', true)
-          + '<div class="app-page">' + errBox('详情加载失败：' + e.message) + '</div>';
+        $('#detailArea').innerHTML = detailTopbar() + errBox('详情加载失败：' + e.message);
       });
+  }
+
+  function detailTopbar() {
+    return '<div class="detail-topbar"><button class="back-btn" id="navBack">' + SVG.back + '返回匹配结果</button></div>';
   }
 
   function closeDetail() {
@@ -367,7 +366,9 @@
   }
   function showListAgain() {
     stopTyping();
+    state.view = 'list';
     if (state.result) renderList({ restoreScroll: true });
+    else showArea('results');
   }
 
   function statVal(stats, a, b) {
@@ -395,19 +396,13 @@
     const selfIntro = typeof ext.self_introduction === 'string' ? ext.self_introduction.trim() : '';
     const age = d.age_estimate;
 
-    // header overlay card
-    let head = '<div class="school-info-card-overlay">'
-      + '<div><span class="professor-name-main">' + esc(d.store_name || '') + '</span>'
-      + (nameEn ? '<span class="professor-name-en">' + esc(nameEn) + '</span>' : '') + '</div>';
-    if (institution) {
-      head += '<div class="location-row">' + SVG.pin + '<span>' + esc(institution)
-        + (td.department ? ' | ' + esc(td.department) : '') + '</span></div>';
-    }
+    // hero
+    let meta = '';
     if (age || (td.title && td.isValid)) {
-      head += '<div class="professor-meta-row"><div class="meta-ribbon-emblem"></div>';
+      meta = '<div class="professor-meta-row"><div class="meta-ribbon-emblem"></div>';
       if (age) {
         const retireIn = Number(age.retire_in);
-        head += '<div class="professor-age-mini"><span class="age-mini-num">约' + esc(age.age) + '岁</span>'
+        meta += '<div class="professor-age-mini"><span class="age-mini-num">约' + esc(age.age) + '岁</span>'
           + '<span class="age-mini-sep">·</span>'
           + (retireIn > 0
             ? '<span class="age-mini-retire">距退休' + retireIn + '年</span>'
@@ -415,15 +410,30 @@
           + '<span class="age-mini-note">推算</span></div>';
       }
       if (td.title && td.isValid) {
-        head += '<div class="professor-title-section ' + P.titleRankClass(td.title) + '">'
+        meta += '<div class="professor-title-section ' + P.titleRankClass(td.title) + '" style="margin-left:auto">'
           + '<span class="professor-title-label">职称</span>'
           + '<span class="professor-title-value">' + esc(td.title) + '</span></div>';
       }
-      head += '</div>';
+      meta += '</div>';
     }
-    head += '</div>';
+    const hero = '<div class="detail-hero">'
+      + '<img class="hero-avatar" src="' + esc(avatarUrl(d)) + '"' + AVATAR_ONERR + ' alt="">'
+      + '<div class="hero-info">'
+      + '<div><span class="professor-name-main">' + esc(d.store_name || '') + '</span>'
+      + (nameEn ? '<span class="professor-name-en">' + esc(nameEn) + '</span>' : '') + '</div>'
+      + (institution
+        ? '<div class="location-row">' + SVG.pin + '<span>' + esc(institution)
+          + (td.department ? ' | ' + esc(td.department) : '') + '</span></div>'
+        : '')
+      + meta
+      + '<div class="hero-actions">'
+      + '<button class="footer-btn professor-ai-btn" data-open-chat="' + Number(d.product_id) + '">' + iconInline(SVG.spark, 15) + 'AI模拟对话</button>'
+      + '<button class="footer-btn professor-contact-btn" data-demo-toast="联系教授">' + iconInline(SVG.phone, 15) + '联系教授</button>'
+      + '<div class="footer-icon-item" data-demo-toast="收藏">' + SVG.heart + '<span class="icon-label">收藏</span></div>'
+      + '<div class="footer-icon-item" data-copy-link="1">' + SVG.share + '<span class="icon-label">分享</span></div>'
+      + '</div></div></div>';
 
-    // 基本信息
+    // sidebar: 基本信息 / 研究关键词 / 研究分野 / 学术成果统计 / 自我介绍
     let basic = '<div class="section-card"><div class="section-title">基本信息</div><div class="professor-info-grid">';
     if (institution) basic += infoRow('所属机构', esc(institution));
     if (td.department) basic += infoRow('院系', esc(td.department));
@@ -440,9 +450,6 @@
         + esc(orcid) + '</a></div>';
     }
     basic += '</div></div>';
-
-    const intro = selfIntro
-      ? '<div class="section-card"><div class="section-title">自我介绍</div><div class="self-intro-text">' + esc(selfIntro) + '</div></div>' : '';
 
     const kwCard = researchKeywords.length
       ? '<div class="section-card"><div class="section-title">研究关键词</div><div class="keywords-container">'
@@ -467,6 +474,23 @@
             + '<div class="stat-label">' + it[3] + '</div></div></div>').join('')
           + '</div></div>';
       }
+    }
+
+    const intro = selfIntro
+      ? '<div class="section-card"><div class="section-title">自我介绍</div><div class="self-intro-text">' + esc(selfIntro) + '</div></div>' : '';
+
+    // main column: papers first (always rendered), then timelines / awards / patents
+    let papersCard;
+    if (papers.length) {
+      const shown = state.papersExpanded ? papers : papers.slice(0, 10);
+      papersCard = '<div class="section-card"><div class="section-title">研究论文<span class="section-count">(' + papers.length + ')</span></div>'
+        + '<div class="papers-list">' + shown.map((pp, i) => paperItem(pp, i)).join('') + '</div>'
+        + (papers.length > 10 && !state.papersExpanded
+          ? '<div class="papers-more" id="papersMore">展开全部 ' + papers.length + ' 篇</div>' : '')
+        + '</div>';
+    } else {
+      papersCard = '<div class="section-card"><div class="section-title">研究论文<span class="section-count">(0)</span></div>'
+        + '<div class="papers-empty">该教授的公开档案暂未收录论文记录。可通过上方 ResearchMap 链接查看其学术主页。</div></div>';
     }
 
     const eduCard = education.length
@@ -494,30 +518,11 @@
           + '<div class="patent-content"><span class="patent-title">' + esc(typeof t === 'string' ? t : (t.title || '')) + '</span></div></div>').join('')
         + '</div></div>' : '';
 
-    let papersCard = '';
-    if (papers.length) {
-      const shown = state.papersExpanded ? papers : papers.slice(0, 10);
-      papersCard = '<div class="section-card"><div class="section-title">研究论文<span class="section-count">(' + papers.length + ')</span></div>'
-        + '<div class="papers-list">' + shown.map((pp, i) => paperItem(pp, i)).join('') + '</div>'
-        + (papers.length > 10 && !state.papersExpanded
-          ? '<div class="papers-more" id="papersMore">展开全部 ' + papers.length + ' 篇</div>' : '')
-        + '</div>';
-    }
-
-    const footer = '<div class="detail-footer">'
-      + '<div class="footer-icon-item" data-demo-toast="收藏">' + SVG.heart + '<span class="icon-label">收藏</span></div>'
-      + '<div class="footer-icon-item" data-demo-toast="分享">' + SVG.share + '<span class="icon-label">分享</span></div>'
-      + '<div class="spacer"></div>'
-      + '<button class="footer-btn professor-contact-btn" data-demo-toast="联系教授">' + iconInline(SVG.phone, 14) + '联系教授</button>'
-      + '<button class="footer-btn professor-ai-btn" data-demo-toast="AI模拟对话">' + iconInline(SVG.spark, 14) + 'AI模拟对话</button>'
+    $('#detailArea').innerHTML = detailTopbar() + hero
+      + '<div class="detail-columns">'
+      + '<div class="detail-main">' + papersCard + eduCard + careerCard + awardsCard + patentsCard + '</div>'
+      + '<div class="detail-aside">' + basic + kwCard + areaCard + statsCard + intro + '</div>'
       + '</div>';
-
-    screenEl().innerHTML = navbarHtml('教授详情', true)
-      + '<div class="detail-banner"><img src="' + esc(avatarUrl(d)) + '"' + AVATAR_ONERR + ' alt=""></div>'
-      + '<div class="detail-body">'
-      + head + basic + intro + kwCard + areaCard + statsCard + eduCard + careerCard + awardsCard + patentsCard + papersCard
-      + '</div>' + footer;
-    screenEl().scrollTop = 0;
   }
 
   function iconInline(svg, size) {
@@ -537,7 +542,7 @@
         + '</div></div>').join('')
       + '</div></div>';
   }
-  function paperItem(pp, i) {
+  function paperItem(pp) {
     const links = (pp.external_urls || []).map((u, ui) =>
       '<a class="paper-link" href="' + esc(u) + '" target="_blank" rel="noopener">' + SVG.link
       + (ui === 0 ? 'PDF' : 'Link ' + (ui + 1)) + '</a>').join('');
@@ -555,14 +560,117 @@
       + '</div></div>';
   }
 
-  // ---- phone screen event delegation ----
-  function onPhoneClick(e) {
+  // ---- AI simulated dialog (stateless persona chat drawer) ----
+  function openChat(pid) {
+    const d = state.detailCache.get(pid);
+    state.chat = {
+      pid: pid,
+      name: (d && d.store_name) || '',
+      image: d ? avatarUrl(d) : P.FALLBACK_AVATAR,
+      msgs: [],           // {role: 'user'|'assistant', content}
+      sending: false,
+      error: '',
+    };
+    $('#chatDrawer').hidden = false;
+    renderChat();
+    // opening greeting: empty message + empty history -> persona's self-introduction
+    requestChat('', []);
+  }
+  function closeChat() {
+    state.chat = null;
+    $('#chatDrawer').hidden = true;
+  }
+
+  function requestChat(message, history) {
+    const c = state.chat;
+    if (!c) return;
+    c.sending = true;
+    c.error = '';
+    renderChat();
+    api(chatUrl(c.pid), {
+      method: 'POST',
+      body: JSON.stringify({ professor_id: c.pid, message: message, history: history }),
+    })
+      .then((res) => {
+        if (!state.chat || state.chat.pid !== c.pid) return;
+        if (res.professor_name) c.name = res.professor_name;
+        c.msgs.push({ role: 'assistant', content: res.reply || '' });
+        c.sending = false;
+        renderChat();
+      })
+      .catch((e) => {
+        if (!state.chat || state.chat.pid !== c.pid) return;
+        c.sending = false;
+        c.error = e.message || '对话失败，请稍后再试';
+        renderChat();
+      });
+  }
+
+  function sendChat() {
+    const c = state.chat;
+    if (!c || c.sending) return;
+    const input = $('#chatInput');
+    const text = (input.value || '').trim();
+    if (!text) return;
+    if (text.length > 500) { toast('消息长度不能超过500字'); return; }
+    const history = c.msgs.slice();  // history = everything before this user message
+    c.msgs.push({ role: 'user', content: text });
+    input.value = '';
+    requestChat(text, history);
+  }
+
+  function renderChat() {
+    const c = state.chat;
+    if (!c) return;
+    const msgs = c.msgs.map((m) =>
+      '<div class="chat-msg ' + m.role + '"><div class="chat-bubble">' + esc(m.content) + '</div></div>').join('');
+    const typing = c.sending
+      ? '<div class="chat-msg assistant"><div class="chat-bubble"><span class="chat-typing"><i></i><i></i><i></i></span></div></div>'
+      : '';
+    const err = c.error ? '<div class="chat-err">' + esc(c.error) + '</div>' : '';
+    $('#chatDrawer').innerHTML =
+      '<div class="chat-head">'
+      + '<img src="' + esc(c.image) + '"' + AVATAR_ONERR + ' alt="">'
+      + '<div class="chat-head-info">'
+      + '<div class="chat-head-name">' + esc(c.name || 'AI模拟对话') + '</div>'
+      + '<div class="chat-head-sub">AI模拟对话 · 基于公开履历的角色扮演，非本人</div>'
+      + '</div>'
+      + '<button class="chat-close" id="chatClose">×</button>'
+      + '</div>'
+      + '<div class="chat-msgs" id="chatMsgs">' + msgs + typing + err + '</div>'
+      + '<div class="chat-input-bar">'
+      + '<textarea id="chatInput" rows="1" maxlength="500" placeholder="介绍一下你的研究背景，或问问教授的研究方向…"></textarea>'
+      + '<button class="chat-send" id="chatSend"' + (c.sending ? ' disabled' : '') + '>发送</button>'
+      + '</div>'
+      + '<div class="chat-note">回复由大模型按教授公开履历实时生成，仅供预沟通参考 · Enter 发送，Shift+Enter 换行</div>';
+    const box = $('#chatMsgs');
+    box.scrollTop = box.scrollHeight;
+    const input = $('#chatInput');
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendChat(); }
+    });
+    if (!c.sending) input.focus();
+    $('#chatSend').addEventListener('click', sendChat);
+    $('#chatClose').addEventListener('click', closeChat);
+  }
+
+  // ---- results/detail event delegation ----
+  function onMatchAreaClick(e) {
     const back = e.target.closest('#navBack');
     if (back) { closeDetail(); return; }
+    const openChatBtn = e.target.closest('[data-open-chat]');
+    if (openChatBtn) { openChat(Number(openChatBtn.getAttribute('data-open-chat'))); return; }
     const collect = e.target.closest('[data-collect]');
     if (collect) { e.stopPropagation(); toast('演示模式暂不支持收藏'); return; }
     const demoBtn = e.target.closest('[data-demo-toast]');
     if (demoBtn) { toast('演示模式不含此功能，完整体验请至 App'); return; }
+    const copyLink = e.target.closest('[data-copy-link]');
+    if (copyLink) {
+      (navigator.clipboard ? navigator.clipboard.writeText(location.href) : Promise.reject())
+        .then(() => toast('页面链接已复制'))
+        .catch(() => toast('复制失败'));
+      return;
+    }
     const cite = e.target.closest('[data-cite]');
     if (cite) {
       const text = cite.getAttribute('data-cite') || '';
@@ -576,9 +684,9 @@
       state.papersExpanded = true;
       const pid = parsePidFromHash();
       if (pid && state.detailCache.has(pid)) {
-        const keep = screenEl().scrollTop;
+        const keep = window.scrollY;
         renderDetail(state.detailCache.get(pid));
-        screenEl().scrollTop = keep;
+        window.scrollTo(0, keep);
       }
       return;
     }
@@ -593,7 +701,11 @@
       }
       return;
     }
-    if (state.showTabInfo) { state.showTabInfo = false; renderList({ restoreScroll: true }); return; }
+    if (state.showTabInfo && state.view === 'list') {
+      state.showTabInfo = false;
+      renderList({ restoreScroll: true });
+      return;
+    }
     const card = e.target.closest('.interview-card');
     if (card) { openDetail(Number(card.dataset.pid)); }
   }
@@ -604,30 +716,15 @@
   }
   window.addEventListener('popstate', () => {
     const pid = parsePidFromHash();
-    if (pid && state.result) openDetailFromHistory(pid);
+    if (pid && state.result) openDetail(pid, true);
     else if (state.view === 'detail') showListAgain();
   });
-  function openDetailFromHistory(pid) {
-    // back/forward to a detail hash — render without pushing a new history entry
-    state.view = 'detail';
-    state.papersExpanded = false;
-    if (state.detailCache.has(pid)) { renderDetail(state.detailCache.get(pid)); return; }
-    screenEl().innerHTML = navbarHtml('教授详情', true)
-      + '<div class="detail-loading">' + skeletonCards(4) + '</div>';
-    api(detailUrl(pid))
-      .then((d) => { state.detailCache.set(pid, d); if (state.view === 'detail') renderDetail(d); })
-      .catch((e) => {
-        if (state.view !== 'detail') return;
-        screenEl().innerHTML = navbarHtml('教授详情', true)
-          + '<div class="app-page">' + errBox('详情加载失败：' + e.message) + '</div>';
-      });
-  }
 
   // ---- setup ----
   function setPill(ok, h) {
     const pill = $('#connPill');
     pill.classList.toggle('ok', ok); pill.classList.toggle('bad', !ok);
-    $('#connText').textContent = ok ? (h.professor_count + ' 教授 · ' + h.embedding_provider) : '连接失败';
+    $('#connText').textContent = ok ? ('自部署 · ' + h.professor_count + ' 位教授样本 · ' + h.embedding_provider) : '连接失败';
   }
   function loadMeta() {
     if (state.metaMode === 'bundled') { state.meta = bundledMeta(); renderChips(); return Promise.resolve(); }
@@ -638,8 +735,8 @@
   function loadHealth() {
     if (state.healthMode === 'none') {
       $('#connPill').classList.add('ok');
-      $('#connText').textContent = '在线演示 · 满血';
-      $('#healthKvs').innerHTML = '<div class="muted">连接线上满血部署（只读演示，按 IP/全局限流）。</div>';
+      $('#connText').textContent = '在线演示 · 满血 · 约18万教授全量索引';
+      $('#healthKvs').innerHTML = '<div class="muted">连接线上满血部署（生产全量约 18 万教授；只读演示，按 IP/全局限流）。</div>';
       return Promise.resolve();
     }
     return api('/api/health')
@@ -693,9 +790,10 @@
     $('#apiBase').value = state.apiBase;
     $('#adminToken').value = state.adminToken;
     $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchView(b.dataset.view)));
-    $('#view-match').addEventListener('click', onChipClick);
+    $('#view-match').addEventListener('click', (e) => { onChipClick(e); });
+    $('#resultsArea').addEventListener('click', onMatchAreaClick);
+    $('#detailArea').addEventListener('click', onMatchAreaClick);
     $('#runBtn').addEventListener('click', runMatch);
-    $('#phoneScreen').addEventListener('click', onPhoneClick);
     $('#testBtn').addEventListener('click', () => { persistConn(); loadMeta(); loadHealth(); });
     $('#loadCfgBtn').addEventListener('click', () => { persistConn(); loadConfig(); });
     $('#saveCfgBtn').addEventListener('click', saveConfig);

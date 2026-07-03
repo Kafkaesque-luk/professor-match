@@ -32,6 +32,7 @@ jobs:
           DEMO_API_BASE: ${{ vars.DEMO_API_BASE }}
           DEMO_MATCH_PATH: ${{ vars.DEMO_MATCH_PATH }}
           DEMO_DETAIL_PATH: ${{ vars.DEMO_DETAIL_PATH }}
+          DEMO_CHAT_PATH: ${{ vars.DEMO_CHAT_PATH }}
         run: |
           mkdir -p _site
           cp web/index.html web/app.js web/professor.js web/styles.css web/meta.js _site/
@@ -39,12 +40,15 @@ jobs:
           [ -n "$MATCH_PATH" ] || MATCH_PATH='/api/match'
           DETAIL_PATH="$DEMO_DETAIL_PATH"
           [ -n "$DETAIL_PATH" ] || DETAIL_PATH='/api/professor/{id}'
+          CHAT_PATH="$DEMO_CHAT_PATH"
+          [ -n "$CHAT_PATH" ] || CHAT_PATH='/api/professor/{id}/chat'
           if [ -n "$DEMO_API_BASE" ]; then
             cat > _site/config.js <<EOF
           window.PM_CONFIG = {
             apiBase: '${DEMO_API_BASE}',
             matchPath: '${MATCH_PATH}',
             detailPath: '${DETAIL_PATH}',
+            chatPath: '${CHAT_PATH}',
             metaMode: 'bundled',
             healthMode: 'none'
           };

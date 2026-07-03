@@ -70,6 +70,32 @@ def expand_keywords(user_input: str, settings: Settings | None = None) -> List[s
         return [user_input]
 
 
+def chat_completion(messages: List[dict], settings: Settings | None = None, *,
+                    temperature: float = 0.85, max_tokens: int = 800) -> str:
+    """Multi-turn chat completion for the professor persona chat.
+
+    Unlike ``expand_keywords`` this does NOT silently degrade — the caller needs to know
+    when the LLM is unavailable (no key / provider ``none``) to surface a clear error.
+    Production uses qwen-max for the persona chat; the dashscope path honors that unless
+    the configured model is already a chat-grade override.
+    """
+    s = settings or get_settings()
+    if s.llm_provider == "none":
+        raise RuntimeError("LLM_PROVIDER=none：AI 对话已停用（设置 dashscope/openai 并配置密钥）")
+    if s.llm_provider == "openai":
+        url, key, model = _OPENAI_CHAT, s.openai_api_key, s.openai_llm_model
+    else:
+        url, key, model = _DASHSCOPE_CHAT, s.qwen_api_key, "qwen-max"
+    if not key:
+        raise RuntimeError("未配置 LLM 密钥：请在 .env 或终端「设置」页配置 DashScope/OpenAI Key")
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    payload = {"model": model, "messages": messages,
+               "temperature": temperature, "max_tokens": max_tokens}
+    r = httpx.post(url, json=payload, headers=headers, timeout=60)
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+
 def _chat(url: str, api_key: str, model: str, user_prompt: str) -> str:
     if not api_key:
         raise RuntimeError("LLM api key not configured")
