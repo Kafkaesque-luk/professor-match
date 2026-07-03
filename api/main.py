@@ -2,9 +2,10 @@
 FastAPI entry point for professor-match.
 
 Endpoints
-  GET  /api/health   liveness + config visibility (no secrets)
-  GET  /api/meta     form options for the web terminal (regions, ranks, types, disciplines)
-  POST /api/match    run the match pipeline
+  GET  /api/health           liveness + config visibility (no secrets)
+  GET  /api/meta             form options for the web terminal (regions, ranks, types, disciplines)
+  POST /api/match            run the match pipeline
+  GET  /api/professor/{id}   full detail for one professor (the terminal's detail page)
 Static web terminal (if built) is served at /.
 """
 
@@ -69,6 +70,15 @@ def match(req: MatchRequest) -> dict:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:  # provider/qdrant failures -> 502 with a readable message
         raise HTTPException(status_code=502, detail=f"match failed: {e}")
+
+
+@app.get("/api/professor/{product_id}")
+def professor_detail(product_id: int) -> dict:
+    """Full detail for one matched professor — powers the terminal's app-identical detail page."""
+    row = get_store().detail(product_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="professor not found")
+    return row
 
 
 # ---- admin: runtime deployment config (gated; disabled in demo mode; never leaks secrets) ----

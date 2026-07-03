@@ -88,12 +88,22 @@ is configurable — so the same UI can point at:
 - a **live upstream** deployment (e.g. behind a read-only proxy) for a full-scale preview.
 
 It does double duty: a **Setup** tab (connection, health, runtime provider/key config) and a
-**Match** tab (run searches, see the three tiers grouped by school with age and match-score badges).
+**Match** tab. Match results render as a **phone screen that replicates the production mobile
+app 1:1** — the three-tier tabs, school groups, professor cards (avatar, title badge, estimated-age
+tag, match-score pill, research-keyword chips), and a tap-through **professor detail page**
+(basic info, research keywords/field, output statistics, education & career timelines, awards,
+patents, and parsed publications with peer-review badges and copy-citation). The card/detail
+parsing logic (`web/professor.js`) is a faithful port of the production frontend helpers.
+
+The detail page is powered by `GET /api/professor/{id}` (full CV for one professor from the
+bundled sample). When pointing at a different backend, set `detailPath` in `config.js`
+(`'{id}'` placeholder) alongside `matchPath`.
 
 **Publishing your own demo to GitHub Pages:** the included workflow (`.github/workflows/pages.yml`)
-deploys `web/` to Pages. Point it at your backend by setting a repository variable `DEMO_API_BASE`
-(Settings → Secrets and variables → Actions → Variables); leave it unset and the build ships the
-same-origin default, so forks never silently call someone else's backend.
+deploys `web/` to Pages. Point it at your backend by setting repository variables `DEMO_API_BASE`
+(+ optional `DEMO_MATCH_PATH` / `DEMO_DETAIL_PATH`) under Settings → Secrets and variables →
+Actions → Variables; leave them unset and the build ships the same-origin default, so forks never
+silently call someone else's backend.
 
 ## Bring your own data
 
@@ -151,5 +161,8 @@ OpenAI 密钥（在 `.env` 或终端「设置」页填写）。
 逐行移植，并有测试覆盖（`api/tests/`）。检索复用生产同款嵌入模型与向量，结果与生产同源。
 
 **网页终端**后端无关：同一套界面既能连本机自部署的 Python，也能（经只读代理）连线上满血部署做效果预览。
+匹配结果以「手机屏」形式 1:1 复刻生产 App——三档页签、按校分组、教授卡片（头像/职称/预估年龄/匹配度/研究关键词），
+点击卡片进入与 App 同款的**教授详情页**（基本信息、研究关键词/分野、成果统计、教育背景与职业经历时间轴、获奖、专利、
+论文解析含査読徽章与引用复制）。
 
 数据来自公开的 [researchmap](https://researchmap.jp) 学术主页，不含联系方式与业务数据。

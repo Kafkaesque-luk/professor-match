@@ -54,6 +54,27 @@ def _coerce_extend(raw: Any) -> Optional[dict]:
     return None
 
 
+def _research_keywords(extend: Optional[dict], limit: int = 5) -> List[str]:
+    """Top-N ``extend.research_keywords`` — the chips on the app's professor card."""
+    if not extend:
+        return []
+    kws = extend.get("research_keywords")
+    if not isinstance(kws, list):
+        return []
+    return [k for k in kws if isinstance(k, str) and k][:limit]
+
+
+def _research_area(extend: Optional[dict]) -> str:
+    """First ``extend.research_areas`` entry, with the trailing ' /' researchmap artifact removed."""
+    if not extend:
+        return ""
+    areas = extend.get("research_areas")
+    if not isinstance(areas, list) or not areas or not isinstance(areas[0], str):
+        return ""
+    area = areas[0].strip()
+    return area[:-1].strip() if area.endswith("/") else area
+
+
 class ProfessorStore:
     def __init__(self, path: Optional[str] = None, settings: Optional[Settings] = None) -> None:
         self.s = settings or get_settings()
@@ -135,6 +156,9 @@ class ProfessorStore:
                 "school_type_label": format_type_label(row.get("school_type")),
                 "match_score": score,
                 "similarity_score": score,
+                # Card chips — derived here because the response strips the heavy `extend` blob.
+                "research_keywords": _research_keywords(extend),
+                "research_area": _research_area(extend),
             }
             # Convenience age badge (high|medium only) — single source of truth.
             est = estimate_from_extend(extend) if extend else None
@@ -145,6 +169,36 @@ class ProfessorStore:
                 prof["age_estimate"] = None
             result.append(prof)
         return result
+
+    def detail(self, product_id: int) -> Optional[Dict[str, Any]]:
+        """Full professor detail for the terminal's detail page — mirrors what the production
+        app reads from ``store_product`` (whitelisted fields + the full ``extend`` CV blob,
+        which the frontend parses exactly like the mobile app does)."""
+        row = self.by_id.get(int(product_id or 0))
+        if row is None:
+            return None
+        extend = _coerce_extend(row.get("extend"))
+        aff = extend.get("affiliation") if (extend and isinstance(extend.get("affiliation"), dict)) else {}
+        out: Dict[str, Any] = {
+            "product_id": int(row.get("product_id") or 0),
+            "store_name": row.get("store_name", ""),
+            "image": row.get("image", ""),
+            "school_name": row.get("school_name", ""),
+            "school_rank": row.get("school_rank", 0),
+            "school_type": row.get("school_type", 0),
+            "cate_id": row.get("cate_id", 0),
+            "position": (aff.get("position") or "") if isinstance(aff, dict) else "",
+            "school_rank_label": format_rank_label(row.get("school_rank")),
+            "school_type_label": format_type_label(row.get("school_type")),
+            "extend": extend,
+        }
+        est = estimate_from_extend(extend) if extend else None
+        if est and est["confidence"] in ("high", "medium"):
+            out["age_estimate"] = {"age": est["age"], "confidence": est["confidence"],
+                                   "retire_in": est["retire_in"]}
+        else:
+            out["age_estimate"] = None
+        return out
 
 
 @lru_cache

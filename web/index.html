@@ -59,7 +59,13 @@
       </div>
 
       <div id="matchError"></div>
-      <div id="results"></div>
+      <!-- Results render as a phone screen replicating the production app 1:1
+           (three-tier tabs, school groups, professor cards, tap-through detail page). -->
+      <div id="phoneWrap" class="phone-wrap" hidden>
+        <div class="phone">
+          <div class="phone-screen" id="phoneScreen"></div>
+        </div>
+      </div>
     </section>
 
     <!-- ============ SETUP VIEW ============ -->
@@ -118,8 +124,11 @@
     </section>
   </main>
 
+  <div id="pmToast" class="pm-toast"></div>
+
   <script src="config.js"></script>
   <script src="meta.js"></script>
+  <script src="professor.js"></script>
   <script src="app.js"></script>
 </body>
 </html>
