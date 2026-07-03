@@ -4,7 +4,7 @@
 
 <br/>
 
-# Professor Match
+# Japan Professor Match
 
 **Finds "the right one" for you among ~300,000 Japanese professors**
 
@@ -44,14 +44,15 @@ So: you say what you want to research, and the machine sifts through every profe
 
 Fair question. You can absolutely ask any LLM: "Which Japanese professors work on medical imaging AI?" It will name three to five famous ones **from memory** — and that's it. Web search doesn't save it: a few dozen pages at best, whatever it happens to hit.
 
-This project does it the dumb way, which is also the accurate way: **pre-compute vectors for ~300k professors' CVs and keep all the data local**. When your query comes in:
+This project does it the dumb way, which is also the accurate way: **pre-compute vectors for ~300k professors' CVs — together with their ~4 million published papers — and keep all the data local**. When your query comes in:
 
 1. **Cast the wide net** — compare semantically against *every one* of the 300k, nobody is skipped;
 2. **Then filter and rank** — a deterministic discipline gate kills cross-field noise, then sort by relevance and bucket by age / school tier.
 
-|  | Asking an LLM (even with web search) | Professor Match |
+|  | Asking an LLM (even with web search) | Japan Professor Match |
 |--|--------------------------------------|-----------------|
 | Coverage | A few dozen web pages, hit or miss | **All ~300k professors screened** |
+| Data base | Obscure Japanese papers barely in the training set, plus a knowledge cutoff | ~300k CVs + **~4M papers** fully indexed, every result traceable |
 | Who gets found | Famous names it "remembers" | Semantic match — obscure-but-perfect professors surface too |
 | Truthfulness | May hallucinate names and topics | Every result maps to a real CV row; paper links are one click away |
 | Hard filters | "Age 33–55", "non-top-30" — can't do it | Structured-field filtering |
@@ -130,7 +131,7 @@ Two legs, one shared brain — the web terminal is backend-agnostic, so both bac
 ```
 
 - **Retrieval**: Qdrant, 1024-dim cosine (DashScope text-embedding-v4), recall 150 candidates per query; region / school rank / school type all live in the vector payload — **filtering happens inside the store, no table round-trips**.
-- **Data**: one researchmap-style CV JSON per professor (education / career / papers / awards / patents). In production, ages are **backfilled offline into a side table (140k+ rows)** — read-only at serving time; the open-source port bundles the same estimator and computes live.
+- **Data**: one researchmap-style CV JSON per professor (education / career / papers / awards / patents), **~4 million papers across the corpus**. In production, ages are **backfilled offline into a side table (140k+ rows)** — read-only at serving time; the open-source port bundles the same estimator and computes live.
 - **Dialog**: a five-layer persona prompt (identity anchor / CV memory / keyword trend / methodology / style constraints + per-field anti-hallucination), assembled once per professor and cached; **the chat is fully stateless** — the browser carries the history, the server stores nothing.
 - **Protection** (live demo): three-layer rate limits (per-IP hourly / per-IP daily / global daily) + automatic abuse bans + fail-closed (if the cache is down, deny rather than leak) + an env kill switch.
 
