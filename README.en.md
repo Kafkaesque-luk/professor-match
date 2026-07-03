@@ -57,7 +57,7 @@ This project does it the dumb way, which is also the accurate way: **pre-compute
 | Hard filters | "Age 33–55", "non-top-30" — can't do it | Structured-field filtering |
 | What you get | A paragraph of names, gone after the chat | Tiered lists + detail pages + you can even "talk" to the professor |
 
-In short: an LLM is a well-read generalist; this job needs an investigator holding the full census. Full recall first, precise ranking second — that's why the data and vectors must live in your own hands, and why a thin prompt wrapper will never reach this accuracy.
+In short: full recall first, precise ranking second. Keeping the data and vectors in your own hands is what makes this accuracy possible — a thin prompt wrapper can't get there.
 
 ## Show, don't tell 📸
 
@@ -67,7 +67,7 @@ A real query for "deep learning analysis of medical imaging":
 
 ![Match results](docs/screenshots/match.png)
 
-**② Professor detail page** — fully parsed publications on top (peer-review badges, PDF links, one-click citation copy), CV profile on the right. Looks like a finished product? Because it's ported 1:1 from the production app.
+**② Professor detail page** — fully parsed publications on top (peer-review badges, PDF links, one-click citation copy), CV profile on the right.
 
 ![Professor detail](docs/screenshots/detail.png)
 
@@ -75,11 +75,11 @@ A real query for "deep learning analysis of medical imaging":
 
 ![AI dialog](docs/screenshots/chat.png)
 
-> Watch closely: this "Professor Nemoto" (AI role-play — the drawer header clearly says so) opens with his own ML-for-medical-imaging research and asks about *my* background. Not scripted lines — a persona assembled live from each professor's papers and CV. Pick another professor, get a completely different character.
+> Watch closely: this "Professor Nemoto" (AI role-play — the drawer header clearly says so) opens with his own ML-for-medical-imaging research and asks about *my* background. The persona is assembled live from each professor's papers and CV — pick another professor, get a completely different character.
 
-## Three tiers — not one list cut into three
+## Three tiers: three independent views
 
-Many "tiers" out there are one relevance ranking chopped into thirds. These are **three independent views over the same recall pool** (overlap allowed):
+The tiers are **three independent criteria over the same recall pool**, each judged separately, overlap allowed:
 
 | Tier | Plainly |
 |------|---------|
@@ -146,7 +146,7 @@ query
   └─▶ group by school + stats
 ```
 
-The deterministic core (age estimation, discipline gate, filter conversion, tiering, school grouping) is a **line-by-line faithful port of the production PHP**, watched by behavioural tests (`api/tests/test_core.py`) — historical quirks preserved on purpose, because "tastes like production" is the whole point.
+The deterministic core (age estimation, discipline gate, filter conversion, tiering, school grouping) is **ported line by line from the production system**, watched by behavioural tests (`api/tests/test_core.py`) — historical quirks preserved on purpose, because "tastes like production" is the whole point.
 
 ## Performance & cost: what one match actually costs
 
@@ -160,27 +160,34 @@ We count these decimals because production actually pays this bill.
 | Tiering + grouping + age injection | < 50 ms | 0 (pure CPU, deterministic) |
 | **One full match** | **≈ 3–10 s** | **< ¥0.005 (under a US cent)** |
 | One AI dialog turn (qwen-max) | 2–4 s | ≈ ¥0.02–0.05 |
+| Reference: human study-abroad advisors picking professors | days of back-and-forth | ¥500–1,000 (RMB) per session |
 
-The lesson: **retrieval is never the expensive part — the LLM is**. So the architecture saves everywhere:
+The reference row is first-hand: the author works in research-proposal coaching and study-abroad advising, and has surveyed professional application writers. In everyday use, this pipeline's professor shortlists match or beat the ¥500–1,000-a-session human service — at one hundred-thousandth of the cost per run.
+
+The LLM dominates the cost; retrieval is nearly free. So the architecture saves everywhere:
 
 - keyword expansion **degrades gracefully** — no key, use the raw query, slightly less sharp, completely free;
 - persona prompts are **cached per professor** — assembled once, never re-built from the DB;
 - corpus vectors are **computed once, reused forever** — the repo ships production-original vectors, so your clone starts with an embedding bill of zero;
 - the live demo's **global daily cap seals the worst case** — script it all night, the bill is still pocket change.
 
-## How the accuracy was earned: three rounds of iteration
+## How the accuracy was earned: tuning notes
 
-This pipeline was not written correctly on the first try. A few scars worth sharing with anyone building RAG matching:
+This pipeline was not written correctly on the first try. A few rounds of tuning worth sharing with anyone building RAG matching:
 
-**Round 1: the fake-tiers incident.** The original tiers were "popular / niche / hidden gems" — which turned out to be one relevance ranking chopped into three. Called out on the spot ("that's one list cosplaying as three"), torn down, rebuilt: today's tiers are **three independent criteria** (relevance / age window / school tier), each judged separately, overlap allowed.
+**Cross-discipline pollution.** Searching "industrial organization (economics)" returned literature and law professors — vectors think "organization" and "institution" look alike everywhere. Lesson: **semantic search drifts; you need a deterministic gate**. With the discipline hard filter in place, the LLM and the vectors only get to be creative inside the fence. Better to under-recall than to mislabel.
 
-**Round 2: cross-discipline pollution.** Searching "industrial organization (economics)" returned literature and law professors — vectors think "organization" and "institution" look alike everywhere. Lesson: **semantic search drifts; you need a deterministic gate**. With the discipline hard filter in place, the LLM and the vectors only get to be creative inside the fence. Better to under-recall than to mislabel.
+**Prompt hijacking.** We once mixed the user's previously saved target major into query expansion for "personalization". A user whose profile said "geometry" searched "e-commerce" — and got a screen full of geometry keywords. The fix: **the current query owns the topic; conflicting context is ignored**. Prompt engineering lesson one: every piece of context you hand the model is grabbing at the steering wheel.
 
-**Round 3: prompt hijacking.** The production version once mixed the user's profile major into query expansion for "personalization". A user whose profile said "geometry" searched "e-commerce" — and got a screen full of geometry keywords. The fix: **the current query owns the topic; conflicting context is ignored**. Prompt engineering lesson one: every piece of context you hand the model is grabbing at the steering wheel.
+**Expansion size and language.** With 3–5 expanded keywords, niche topics under-recall; with 20, the theme dilutes and rankings drift. Repeated trials settled around 10. The other key: **expand into Japanese** — the index speaks Japanese, and searching with Chinese keywords directly craters the recall rate.
 
-**The age-estimation obsession.** Nobody lists a birthday, but "PhD in year X" and "lecturer since year Y" exist. Multi-signal inference: explicit record > degree years > first appointment + title conventions, with confidence degrading at each step; **only medium/high confidence qualifies for the prime-age tier**. Better to miss than to be wrong — recommending a 60-year-old as 40 is a hundred times worse than not recommending them.
+**Hard-mapping Chinese major names.** Terms like "电子商务" (e-commerce) have no same-named category in Japan's discipline taxonomy, so vectors had to guess. We built a Chinese-major → Japanese-research-field mapping table — colloquial names, abbreviations, simplified/traditional variants all included; a hit locks the field deterministically. That one table beat every model-tuning attempt.
 
-**Score calibration.** Raw cosine similarity clusters in 0.30–0.62; shown raw, users read "45%" as a bad match (it's actually very good). A monotonic re-stretch to 62–97% lets people read the gaps at a glance. What's being calibrated is human perception, not the cosine.
+**The recall window.** How many candidates to pull per query went through several trials: 50 was too few — the value-picks tier often came up short; 300 let tail noise into the tiers. It settled at 150: all three tiers stay full, the tail stays clean.
+
+**Age estimation.** Nobody lists a birthday, but "PhD in year X" and "lecturer since year Y" exist. Multi-signal inference: explicit record > degree years > first appointment + title conventions, with confidence degrading at each step; **only medium/high confidence qualifies for the prime-age tier**. Better to miss than to be wrong — recommending a 60-year-old as 40 is a hundred times worse than not recommending them.
+
+**Score calibration.** Raw cosine similarity clusters in 0.30–0.62; shown raw, users read "45%" as a bad match (it's actually very good). A monotonic re-stretch to 62–97% makes the gaps readable at a glance.
 
 ## Live demo vs self-hosted
 
@@ -193,7 +200,7 @@ This pipeline was not written correctly on the first try. A few scars worth shar
 
 ## The web terminal
 
-A zero-dependency, no-build single-page console — **backend-agnostic**: the same UI connects to your locally self-hosted Python API or (through the read-only sandbox) to the full-scale live deployment. The Setup tab manages connection and runtime config; the Match tab is the full desktop experience from the screenshots above — tier tabs, school-grouped cards, the professor detail page (publications first + CV timelines + awards/patents), and the AI dialog drawer. Card/detail parsing (`web/professor.js`) is line-for-line identical to the production frontend.
+A zero-dependency, no-build single-page console — **backend-agnostic**: the same UI connects to your locally self-hosted Python API or (through the read-only sandbox) to the full-scale live deployment. The Setup tab manages connection and runtime config; the Match tab is the full desktop experience from the screenshots above — tier tabs, school-grouped cards, the professor detail page (publications first + CV timelines + awards/patents), and the AI dialog drawer. Card/detail parsing (`web/professor.js`) is identical to the full-scale live deployment.
 
 Pointing at a different backend? Set `matchPath` / `detailPath` / `chatPath` (with the `{id}` placeholder) in `config.js`.
 
