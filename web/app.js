@@ -735,8 +735,8 @@
   function loadHealth() {
     if (state.healthMode === 'none') {
       $('#connPill').classList.add('ok');
-      $('#connText').textContent = '在线演示 · 满血 · 约18万教授全量索引';
-      $('#healthKvs').innerHTML = '<div class="muted">连接线上满血部署（生产全量约 18 万教授；只读演示，按 IP/全局限流）。</div>';
+      $('#connText').textContent = '在线演示 · 满血 · 约30万教授全量索引';
+      $('#healthKvs').innerHTML = '<div class="muted">连接线上满血部署（生产全量约 30 万教授；只读演示，按 IP/全局限流）。</div>';
       return Promise.resolve();
     }
     return api('/api/health')

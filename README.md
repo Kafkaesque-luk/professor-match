@@ -6,7 +6,7 @@
 > index**, so it runs end-to-end with **zero API keys** out of the box.
 
 **Live demo:** https://kafkaesque-luk.github.io/professor-match/ — the same terminal, wired to a
-read-only, rate-limited endpoint backed by the full production index (~180k professors).
+read-only, rate-limited endpoint backed by the full production index (~300k professors).
 
 You describe a research interest (in Chinese or Japanese); the system returns matched professors
 organized into three independent views:
@@ -171,7 +171,7 @@ OpenAI 密钥（在 `.env` 或终端「设置」页填写）。
 逐行移植，并有测试覆盖（`api/tests/`）。检索复用生产同款嵌入模型与向量，结果与生产同源。
 
 **网页终端**后端无关：同一套界面既能连本机自部署的 Python，也能（经只读代理）连线上满血部署做效果预览
-（线上演示背后是生产全量约 18 万教授索引；自部署跑的是自带的 5000 教授样本）。
+（线上演示背后是生产全量约 30 万教授索引；自部署跑的是自带的 5000 教授样本）。
 匹配结果以**电脑端网页布局**承载生产 App 的全部要素——三档页签、按校分组、教授卡片（头像/职称/预估年龄/匹配度/研究关键词），
 点击卡片进入**教授详情页**：英雄区（头像、姓名、所属、年龄/职称绶带）+ 双栏正文，**研究论文置顶主栏**
 （解析出标题/作者/期刊/日期，査読徽章、外链、引用复制，无论文时诚实提示），教育背景/职业经历时间轴、获奖、专利，
